@@ -25,14 +25,21 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      # PINNED, and that is the point. An unpinned `ruff` changes what it
-      # rejects with no commit in this repository: 0.16 promoted ISC and
-      # FURB into the default rule set, which is why this job went red on a
-      # branch nobody had touched. A lint gate that moves on its own reports
-      # the release calendar, not the code.
-      - run: pip install pytest ruff==0.16.3
-      - run: python -m pytest tests -q
-      - run: python -m ruff check scripts tests
+      # uv AND A LOCK, like every other platform in the family. `pip install
+      # pytest ruff` resolved the tooling fresh on every run, so what the gate
+      # rejects was decided by ruff's release calendar rather than by anything
+      # in this repository -- 0.16 promoted ISC and FURB into the default rule
+      # set and the job went red on a branch nobody had touched.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.12.3"
+      - run: uv sync --frozen --group dev
+      - run: make test
+      - run: make lint
+      # ruff was configured in pyproject.toml and never run, so the config
+      # described an intention rather than a guarantee.
+      - name: ruff
+        run: uvx ruff@0.15.22 check .
       # A shell script that cannot be parsed fails at container start, where
       # the error is buried in `docker compose logs` rather than reported here.
       - name: start.sh parses

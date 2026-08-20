@@ -1,0 +1,23 @@
+[project]
+name = "snowflake-platform-airflow3"
+version = "0.1.0"
+description = "Contoso platform: Apache Airflow 3 as the orchestrator over snowflake-emulator"
+requires-python = ">=3.12"
+authors = [{name = "Calvin Cheng", email = "calvin@calvinx.com"}]
+# EMPTY, AND THAT IS THE CLAIM. This platform carries no product and, after the
+# split that `snowflake-platform-tasks` went through, no runtime dependency
+# either: everything under scripts/ is standard library, and every third-party
+# package the pipeline needs is installed inside the worker image from the
+# PRODUCT's own pyproject.toml. A dependency appearing here later would mean
+# the platform had started to carry something it should be pointed at.
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=9.0.3,<10", "ruff>=0.15,<0.16"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
