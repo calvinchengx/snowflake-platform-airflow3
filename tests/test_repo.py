@@ -70,8 +70,29 @@ def test_the_stage_is_one_volume_not_two_paths():
         "stage-data must be a named volume"
     )
     mounts = re.findall(r"- stage-data:(\S+)", compose)
-    assert len(mounts) == 2, f"the stage must be mounted into exactly two services: {mounts}"
-    assert len(set(mounts)) == 1, f"the two services mount the stage at different paths: {mounts}"
+    # The writer (worker), the reader (warehouse) and the one-shot that makes it
+    # writable. What matters is not how many mount it but that they AGREE:
+    # one path, so there is nothing for two configurations to drift about.
+    assert len(mounts) >= 2, f"the stage must be mounted into at least two services: {mounts}"
+    assert len(set(mounts)) == 1, f"services mount the stage at different paths: {mounts}"
+
+
+def test_the_stage_is_made_writable_before_anything_mounts_it():
+    """A named volume is created root-owned and 0755, and neither image is root.
+
+    Measured rather than anticipated: the first real run failed all four `land`
+    tasks with `PermissionError: [Errno 13] Permission denied:
+    '/stages/contoso_pos_customers'`. The Tasks platform chmods its host stage
+    directory for the same reason; a volume needs it done once, by something
+    that is root, before anything else writes.
+    """
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "stage-init:" in compose, "nothing makes the stage writable"
+    assert "chmod 0777 /stages" in compose
+    assert "stage-init: {condition: service_completed_successfully}" in compose, (
+        "the worker must wait for the one-shot to FINISH -- ingest's first act "
+        "is to create a directory in the stage"
+    )
 
 
 def test_the_worker_is_told_where_the_stage_is():

@@ -65,6 +65,29 @@ services:
       timeout: 3s
       retries: 20
 
+  # THE VOLUME REMOVED A TWO-PATH PROBLEM AND INTRODUCED A TWO-USER ONE.
+  #
+  # A named volume is created root-owned and mode 0755. The worker runs as
+  # `airflow` and the warehouse as its own nonroot user, so NEITHER can create a
+  # directory in it -- measured, not anticipated: the first real run failed four
+  # `land` tasks with
+  #
+  #     PermissionError: [Errno 13] Permission denied: '/stages/contoso_pos_customers'
+  #
+  # The Tasks platform chmods its host stage directory for exactly this reason;
+  # a volume needs the same thing done by something that is root, once, before
+  # anything else mounts it. This is that.
+  #
+  # 0777 rather than a shared group: the two images are not ours to give a
+  # common gid, and inventing one would be a change to the emulator's contract
+  # made from the outside.
+  stage-init:
+    image: busybox:${BUSYBOX_VERSION:?see versions.env}
+    user: root
+    command: ["sh", "-c", "mkdir -p /stages && chmod 0777 /stages && echo 'platform: stage is writable by the worker and the warehouse'"]
+    volumes:
+      - stage-data:/stages
+
   airflow:
     mem_limit: 4g
     build:
@@ -76,6 +99,9 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       snowflake: {condition: service_healthy}
+      # A one-shot that must FINISH, not merely start: ingest's first act is to
+      # create a directory in the stage.
+      stage-init: {condition: service_completed_successfully}
     ports:
       - "${AIRFLOW_PORT:-18084}:8080"
     environment:

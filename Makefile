@@ -156,7 +156,11 @@ kill-runs: ## Mark every in-flight run of a DAG failed:  make kill-runs DAG=cont
 	    where dag_id='$(DAG)' and state in ('running','queued');" >/dev/null
 	@echo "platform: in-flight runs of $(DAG) ended"
 
-down: ## Stop and remove everything, volumes included
+down: sources ## Stop and remove everything, volumes included
+# `sources` FIRST, because COMPOSE names the generated fragment and docker
+# compose refuses to run without it. A fresh clone -- or anyone who cleaned it
+# up -- could not tear a stack down at all, which is the worst moment to
+# discover a missing file.
 	$(COMPOSE) down -v
 
 logs: ## Follow the Airflow logs
