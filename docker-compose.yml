@@ -1,0 +1,146 @@
+# The platform: Apache Airflow 3 + a Snowflake target. Names no product.
+#
+# The product arrives two ways, and they are DIFFERENT MECHANISMS that people
+# routinely conflate:
+#
+#   its DAG FILES      -> a bundle (bind mount here, GitDagBundle in production)
+#   its DEPENDENCIES   -> uv pip install of its pyproject.toml into the worker
+#
+# The bundle delivers files and installs nothing. A product whose DAGs import a
+# library the worker lacks parses fine and fails at run time.
+#
+# WHAT MAKES THIS CELL DIFFERENT FROM ITS TASKS SIBLING, and it is one thing:
+# THE STAGE IS A VOLUME, not a host directory.
+#
+# `snowflake-platform-tasks` runs its steps on the HOST, so ingest writes into a
+# host directory that is bind-mounted into the warehouse, and both halves name a
+# path on the host. Here ingest runs INSIDE the worker container. A host path
+# would mean the worker writing to its own filesystem and the warehouse reading
+# a different one -- and the symptom would not be an error, it would be a
+# `COPY INTO` that loads zero rows into an empty bronze. So the stage is a named
+# volume mounted into both, and it is the same volume by construction rather
+# than by two configurations agreeing.
+#
+# MEMORY CEILINGS on every service (G38). Docker has 16 GB and several stacks
+# share it; without a limit a container sizes itself against the whole machine
+# and the host's OOM killer picks whichever is largest, which is never the one
+# at fault. These are containment, not tuning: a container that dies hit ITS OWN
+# ceiling and says so.
+services:
+  postgres:
+    mem_limit: 512m
+    image: postgres:${POSTGRES_VERSION:-16}
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  snowflake:
+    mem_limit: 4g
+    image: ghcr.io/calvinchengx/snowflake-emulator:${SNOWFLAKE_EMULATOR_VERSION:?see versions.env}
+    ports:
+      # Published for a human with a SQL client, not for the pipeline -- the
+      # worker reaches this by service name. 18449 rather than the Tasks
+      # platform's 18448 so both stacks can be up at once, which is how their
+      # numbers get compared without tearing one down.
+      - "${SNOWFLAKE_PORT:-18449}:8448"
+    volumes:
+      - emu-data:/data
+      - stage-data:/stages
+    environment:
+      SNOWFLAKE_ADDR: "0.0.0.0:8448"
+      SNOWFLAKE_DATA_DIR: /data
+      SNOWFLAKE_STAGE_DIR: /stages
+      SNOWFLAKE_DUCKDB_PATH: /data/warehouse.duckdb
+      SNOWFLAKE_POLARIS_URL: embedded
+      SNOWFLAKE_PUBLIC_URL: http://snowflake:8448
+    healthcheck:
+      test: ["CMD", "snowflake-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  airflow:
+    mem_limit: 4g
+    build:
+      context: ${PRODUCT}/..
+      dockerfile: ${PWD}/Dockerfile.worker
+      args:
+        AIRFLOW_VERSION: ${AIRFLOW_VERSION:-3.3.1}
+        PRODUCT_DIR: ${PRODUCT_NAME:-product}
+    depends_on:
+      postgres: {condition: service_healthy}
+      snowflake: {condition: service_healthy}
+    ports:
+      - "${AIRFLOW_PORT:-18084}:8080"
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      # THE BUNDLE. Rooted at the product's `dags/` SUBDIRECTORY, which is the
+      # production shape too -- GitDagBundle takes a subdir the same way.
+      AIRFLOW__DAG_PROCESSOR__DAG_BUNDLE_CONFIG_LIST: >-
+        [{"name":"product","classpath":"airflow.dag_processing.bundles.local.LocalDagBundle","kwargs":{"path":"/opt/product/dags"}}]
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "5"
+      # AIRFLOW 3 RUNS TASKS THROUGH THE API SERVER, not the metadata DB. A
+      # stack without api-server fails every task with `Connection refused`.
+      # This is the Task SDK boundary made operational, and a real break from 2.
+      AIRFLOW__API__BASE_URL: "http://localhost:8080"
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://localhost:8080/execution/"
+      AIRFLOW__API_AUTH__JWT_SECRET: "${AIRFLOW_JWT_SECRET:-local-dev-not-a-secret}"
+      # PINNED, and it has to be. Airflow INVENTS a Fernet key when none is set
+      # while postgres keeps what it encrypted with the previous one -- so the
+      # first `make up` works and every one after fails with `InvalidToken` on
+      # any stored credential. The symptom reads like a provisioning bug.
+      # Production supplies its own; this default is local-only and deliberately
+      # not a secret.
+      AIRFLOW__CORE__FERNET_KEY: "${AIRFLOW_FERNET_KEY:-Zp8kRr7vQ2mN4xJ6wL9tY3bV5cX1aS0dF7gH8jK2lM4=}"
+      # WHERE THE TARGET IS. The product reads this through a Connection and
+      # never learns which target answered. In production the same conn_id is
+      # provisioned against a real Snowflake account.
+      SNOWFLAKE_EMULATOR_URL: "http://snowflake:8448"
+      SNOWFLAKE_TARGET: "${SNOWFLAKE_TARGET:-emulator}"
+      # THE STAGE, by the name the product reads. Same volume as the warehouse
+      # mounts, so a file ingest writes is a file COPY INTO can see.
+      PRODUCT_STAGE: /stages
+      # Where the product writes what it built, so a witness can read it from
+      # the host without entering the container. PRODUCT_* rather than
+      # CONTOSO_* -- the two Databricks platforms spell these with the product's
+      # name, and this platform's own test forbids that: a name in a variable is
+      # still a name, and it is the thing that would have to change for a second
+      # product to use this unchanged.
+      PRODUCT_SNAPSHOT: /opt/product-out/product_snapshot.json
+      PRODUCT_STATE: /opt/product-out/state.json
+      # The vendor declaration, for the connection provisioner below.
+      SOURCES_DECL: /sources/sources.yaml
+    volumes:
+      - ${PRODUCT}:/opt/product:ro
+      - ${PRODUCT}/out:/opt/product-out
+      - ${SOURCES}:/sources:ro
+      - ${PWD}/scripts/start.sh:/start.sh:ro
+      - emu-data:/emu-data:ro
+      - stage-data:/stages
+    command: ["bash", "/start.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/v2/monitor/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
+volumes:
+  # The emulator's own storage: the warehouse file and the workspace credential.
+  # Mounted read-only into the worker, which needs the credential and nothing
+  # else -- a product does not reach into a platform, but the platform can hand
+  # it over without a copy when both are containers on one network.
+  emu-data:
+  # THE INTERNAL STAGE. Written by ingest in the worker, read by COPY INTO in
+  # the warehouse. One volume, so the two halves cannot drift into an ingest
+  # that writes where COPY INTO cannot look.
+  stage-data:

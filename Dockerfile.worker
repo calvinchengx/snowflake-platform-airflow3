@@ -1,0 +1,32 @@
+# The ENTIRE product-specific surface of this platform. It names no package:
+# whatever the product's pyproject.toml declares is what gets installed.
+#
+# TWO THINGS, NOT ONE, and conflating them is a trap this platform fell into
+# once already. `uv pip install -r pyproject.toml` installs the DEPENDENCY LIST
+# and nothing else -- the product's own package is not among its dependencies,
+# so a DAG importing it dies at run time with ModuleNotFoundError while the
+# bundle, the deps and the parse all look healthy. Installing the PROJECT
+# (`uv pip install /opt/build`) brings the dependencies with it.
+#
+# Built from a copy at /opt/build rather than from /opt/product, because
+# /opt/product is a read-only bind mount at run time and installing from a path
+# that is later shadowed would make it unclear which code actually ran.
+# A PRODUCT MAY OVERRIDE A TRANSITIVE PIN, and this honours that without ever
+# naming a package. `uv pip install` reads no project config, so a product's
+# `[tool.uv] override-dependencies` governs its lockfile and its CI and NOT the
+# image built from it -- measured once as a lockfile carrying a patched
+# security fix while the running worker still had the vulnerable version.
+#
+# So: if the product ships `uv-overrides.txt`, it is passed through. The
+# platform learns nothing about what is in it, exactly as it learns nothing
+# about what is in pyproject.toml.
+ARG AIRFLOW_VERSION=3.3.1
+FROM apache/airflow:${AIRFLOW_VERSION}
+ARG PRODUCT_DIR=product
+COPY --chown=airflow ${PRODUCT_DIR}/ /opt/build/
+RUN if [ -f /opt/build/uv-overrides.txt ]; then \
+      uv pip install --python /home/airflow/.local/bin/python \
+        --overrides /opt/build/uv-overrides.txt /opt/build; \
+    else \
+      uv pip install --python /home/airflow/.local/bin/python /opt/build; \
+    fi
