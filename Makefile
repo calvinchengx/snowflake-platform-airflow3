@@ -23,7 +23,7 @@ COMPOSE := PRODUCT=$(PRODUCT_ABS) PRODUCT_NAME=$(PRODUCT_NAME) SOURCES=$(SOURCES
 help: ## This list
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/' | expand -t20
 
-up: doctor sources pin ## Build the worker from the product's pyproject.toml and start the stack
+up: doctor sources pin manifest ## Build the worker from the product's pyproject.toml and start the stack
 	@echo "platform: product = $(PRODUCT_ABS)"
 	@echo "platform: sources = $(SOURCES_ABS)"
 	$(COMPOSE) up --build -d
