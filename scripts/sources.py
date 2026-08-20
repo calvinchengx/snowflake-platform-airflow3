@@ -155,7 +155,7 @@ def fragment(decl: dict, sources_dir: str, pins: dict) -> dict:
                     # `ModuleNotFoundError: No module named 'erp_system'` this
                     # command produced on its first run. `uv run` puts both on
                     # the same side of that line.
-                    "command": ["sh", "-c",
+                    "command": ["sh", "-c", (
                                 "pip install --quiet uv && "
                                 "uv sync --quiet && "
                                 # --frozen --no-sync, and it is load-bearing.
@@ -178,7 +178,7 @@ def fragment(decl: dict, sources_dir: str, pins: dict) -> dict:
                                 # `uv run` calls from pruning; they cannot stop
                                 # a sync the script performs internally.
                                 "uv pip install --quiet 'psycopg[binary]' && "
-                                "uv run --frozen --no-sync python scripts/seed_erp.py"],
+                                "uv run --frozen --no-sync python scripts/seed_erp.py")],
                     "restart": "no",
                 }
             services[connect] = {

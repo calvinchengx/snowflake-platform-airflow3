@@ -25,7 +25,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install pytest ruff
+      # PINNED, and that is the point. An unpinned `ruff` changes what it
+      # rejects with no commit in this repository: 0.16 promoted ISC and
+      # FURB into the default rule set, which is why this job went red on a
+      # branch nobody had touched. A lint gate that moves on its own reports
+      # the release calendar, not the code.
+      - run: pip install pytest ruff==0.16.3
       - run: python -m pytest tests -q
       - run: python -m ruff check scripts tests
       # A shell script that cannot be parsed fails at container start, where

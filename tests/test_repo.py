@@ -50,7 +50,7 @@ def test_the_platform_holds_no_product():
 
 def test_the_product_is_supplied_as_a_path():
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    assert re.search(r"^PRODUCT \?= \./product$", makefile, re.M)
+    assert re.search(r"^PRODUCT \?= \./product$", makefile, re.MULTILINE)
 
 
 def test_the_stage_is_one_volume_not_two_paths():
@@ -66,7 +66,7 @@ def test_the_stage_is_one_volume_not_two_paths():
     One named volume, mounted into both services, cannot drift.
     """
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    assert re.search(r"^volumes:.*^  stage-data:", compose, re.M | re.S), (
+    assert re.search(r"^volumes:.*^  stage-data:", compose, re.MULTILINE | re.DOTALL), (
         "stage-data must be a named volume"
     )
     mounts = re.findall(r"- stage-data:(\S+)", compose)
