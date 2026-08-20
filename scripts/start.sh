@@ -108,6 +108,18 @@ for v in vendors:
                             "--conn-extra", json.dumps({
                                 "bootstrap": f"{name}-broker:9092",
                                 "topic": v.get("topic", ""),
+                                # THE DATABASE TOO, because the CDC ingest
+                                # reconciles the stream's net effect against the
+                                # ERP's own row count. A connector that stopped
+                                # early produces a stream that is stable,
+                                # well-formed and SHORT, and only the source can
+                                # say so. Service names on the compose network,
+                                # not published ports: the worker is inside it.
+                                "db_host": f"{name}-db",
+                                "db_port": 5432,
+                                "db_name": v.get("db_name", "erp"),
+                                "db_user": v.get("db_user", "contoso"),
+                                "db_password": v.get("db_password", "contoso-erp-dev"),
                             })], capture_output=True, text=True)
         ok = r.returncode == 0
         print(f"platform: connection {v['conn']!r} -> {name}-broker:9092 ({v.get('topic')})"

@@ -19,11 +19,11 @@ PASSWORD_FILE := /opt/airflow/simple_auth_manager_passwords.json.generated
 COMPOSE := PRODUCT=$(PRODUCT_ABS) PRODUCT_NAME=$(PRODUCT_NAME) SOURCES=$(SOURCES_ABS) PWD=$(CURDIR) \
            docker compose -p $(PROJECT) -f docker-compose.yml -f $(FRAGMENT)
 
-.PHONY: help up down logs connections creds doctor sources trigger unpause verify pin manifest test
+.PHONY: help up down logs connections creds doctor sources trigger unpause verify pin manifest test lint
 help: ## This list
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/' | expand -t20
 
-up: doctor sources pin ## Build the worker from the product's pyproject.toml and start the stack
+up: doctor sources pin manifest ## Build the worker from the product's pyproject.toml and start the stack
 	@echo "platform: product = $(PRODUCT_ABS)"
 	@echo "platform: sources = $(SOURCES_ABS)"
 	$(COMPOSE) up --build -d
@@ -156,7 +156,11 @@ kill-runs: ## Mark every in-flight run of a DAG failed:  make kill-runs DAG=cont
 	    where dag_id='$(DAG)' and state in ('running','queued');" >/dev/null
 	@echo "platform: in-flight runs of $(DAG) ended"
 
-down: ## Stop and remove everything, volumes included
+down: sources ## Stop and remove everything, volumes included
+# `sources` FIRST, because COMPOSE names the generated fragment and docker
+# compose refuses to run without it. A fresh clone -- or anyone who cleaned it
+# up -- could not tear a stack down at all, which is the worst moment to
+# discover a missing file.
 	$(COMPOSE) down -v
 
 logs: ## Follow the Airflow logs
@@ -219,4 +223,9 @@ manifest: ## Build the dbt manifests cosmos renders the graph from
 	cd "$(PRODUCT_ABS)" && uv run --frozen --group dbt python scripts/manifest.py
 
 test: ## Repo-boundary tests (no Docker)
-	python3 -m pytest tests -q
+	uv run --frozen --group dev python -m pytest tests -q
+
+lint: ## Lint this repository's own scripts and tests
+# The PRODUCT's code is linted in the product repository. What is left here is
+# the platform: scripts/ and tests/, and neither imports anything third-party.
+	uv run --frozen --group dev python -m ruff check .
