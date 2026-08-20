@@ -1,0 +1,13 @@
+# LF everywhere. A CRLF checkout on Windows breaks shell scripts the moment
+# they are mounted into a Linux container, and the failure reads as "the
+# container is broken" rather than "your checkout has \r line endings".
+#
+# MEASURED, not inherited: `bash -n scripts/start.sh` -- the CI step that
+# exists precisely so a broken start.sh fails here rather than inside
+# `docker compose logs` -- reports
+#     syntax error near unexpected token `$'do\r''
+# against a CRLF copy of that file. Without this, adding windows-latest to
+# the matrix turns that step red on every run.
+* text=auto eol=lf
+*.png binary
+*.whl binary
