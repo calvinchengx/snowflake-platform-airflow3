@@ -1,0 +1,45 @@
+# Repo-boundary tests: no Docker, no emulator, no product.
+#
+# THE PIPELINE IS NOT RUN HERE. That needs the emulator, four vendors and an
+# Airflow stack, and it is `make verify` against a checked-out product.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Repo tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install pytest ruff
+      - run: python -m pytest tests -q
+      - run: python -m ruff check scripts tests
+      # A shell script that cannot be parsed fails at container start, where
+      # the error is buried in `docker compose logs` rather than reported here.
+      - name: start.sh parses
+        run: bash -n scripts/start.sh
+      # THE COMPOSE FILE IS THE PLATFORM. A typo in it is not caught by any
+      # test above, and it surfaces as a stack that will not come up.
+      - name: docker compose config is valid
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p /tmp/p/dags /tmp/src
+          printf 'version: 1\nvendors: []\n' > /tmp/src/sources.yaml
+          printf '{"services":{}}' > .sources.generated.yml
+          PRODUCT=/tmp/p PRODUCT_NAME=p SOURCES=/tmp/src PWD=$PWD \
+            docker compose --env-file versions.env \
+              -f docker-compose.yml -f .sources.generated.yml config >/dev/null

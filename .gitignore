@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Generated from contoso-sources at `make up` -- never edited, never committed.
+.sources.generated.yml
+
+# THE PRODUCT THIS PLATFORM IS POINTED AT -- a mount point, never content.
+/product
+
+# Local tooling
+.nwave/
