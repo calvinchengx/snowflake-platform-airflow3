@@ -1,0 +1,131 @@
+# Does a PUBLISHED snowflake-emulator still carry this platform end to end?
+#
+# CI proves what this repository owns; this proves what it CONSUMES. This
+# platform had NO unattended verification at all -- only ci.yml on push and
+# pull_request -- while every other platform in the family had a nightly. The
+# cell was ✅ on a witness somebody ran by hand, and nothing renewed it. A green
+# that is never re-proved is a claim about the day it was made.
+name: Acceptance
+
+on:
+  # Fired by snowflake-emulator's release workflow.
+  repository_dispatch:
+    types: [snowflake-emulator-release]
+  # THE GUARD, and it is not belt-and-braces. A dispatch that silently fails to
+  # fire (revoked token, renamed event type, a workflow auto-disabled after 60
+  # days of inactivity) is indistinguishable from one that fired and passed.
+  # The schedule makes that absence loud within a day. It is also what made the
+  # dispatch optional: until this workflow existed, snowflake-emulator's release
+  # could not tell this platform anything, because there was nothing listening.
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Verify the released emulator end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: snowflake-platform-airflow3
+    # To push the adopted pin back. The repository default is read-only and a
+    # job that only reads should stay that way; this one does not.
+    permissions:
+      contents: write
+    steps:
+      # Full history and a usable token: the default checkout is a depth-1
+      # detached HEAD, which cannot rebase onto a main that moved during the run.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          path: snowflake-platform-airflow3
+      # THE VENDORS. `make sources` reads `sources.yaml` from a sources repo and
+      # generates the compose fragment; without this checkout it exits naming the
+      # missing file rather than starting a stack with no vendors.
+      - uses: actions/checkout@v7
+        with:
+          repository: calvinchengx/contoso-sources
+          path: contoso-sources
+      # THE PRODUCT. This platform carries none: PRODUCT is a path, and the
+      # Makefile contains no product identifier by design.
+      - uses: actions/checkout@v7
+        with:
+          repository: calvinchengx/contoso-data-product-snowflake-airflow3
+          path: contoso-data-product-snowflake-airflow3
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      # WHICH VERSION THIS RUN IS ABOUT.
+      #
+      # On a dispatch it is the release that fired. On the schedule it is the
+      # NEWEST release, resolved here rather than assumed to be the pin -- so a
+      # release that never reached us is still verified within a day, and the
+      # dispatch is an optimisation for immediacy rather than the only path.
+      - name: Resolve the version to verify
+        id: target
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            version="${{ github.event.client_payload.version }}"
+            echo "dispatched for $version"
+          else
+            version=$(gh release view --repo calvinchengx/snowflake-emulator \
+                        --json tagName -q .tagName | sed 's/^v//')
+            echo "newest release is $version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # `make up` already runs doctor, sources, pin and manifest -- the pin
+      # check is the one that matters here: versions.env pins the emulator
+      # IMAGE and the product pins the client WHEEL, in two repositories, and
+      # a run against a mismatched pair would verify a combination no
+      # consumer will ever have.
+      - name: Point at that version
+        run: |
+          python3 scripts/set_release.py "${{ steps.target.outputs.version }}"
+          git --no-pager diff --stat versions.env
+      # THE BYTES, not just the declaration checked out above. Without the
+      # fixtures -- the exports and the .api-key each vendor enforces -- mokapi
+      # does not fail: it generates bodies from the OpenAPI schema and answers
+      # every request 200. Three platforms in this family have now needed
+      # exactly this line, two of them after shipping without it.
+      - name: Materialise the vendor exports
+        run: make sources
+        working-directory: contoso-sources
+      - run: make up PRODUCT=../contoso-data-product-snowflake-airflow3 SOURCES=../contoso-sources
+      # VERIFY_TIMEOUT SITS INSIDE timeout-minutes, on purpose. The default is
+      # 3600s against a 45-minute job, so a wedged run is cancelled by GitHub
+      # before verify can print which task it was waiting on -- measured on
+      # fabric-platform-airflow3, which ended exactly that way with no verdict
+      # and no diagnosis. A settled stack finishes this DAG in seven to fifteen
+      # minutes; 1800s is twice the worst of those and still leaves the job time
+      # to say why.
+      - run: make verify DAG=contoso_daily VERIFY_TIMEOUT=1800 PRODUCT=../contoso-data-product-snowflake-airflow3 SOURCES=../contoso-sources
+      # ADOPT WHAT THIS RUN JUST PROVED, whenever the pin moved -- not only on a
+      # dispatch. A scheduled run that verified a newer release end to end has
+      # proved exactly what a dispatched one proves, and discarding that would
+      # mean the pin only ever advances when a cross-repository token happens to
+      # be working.
+      #
+      # No `if: always()`. A step with no condition runs only when every step
+      # before it passed, which is the gate wanted: a red run leaves the pin
+      # where it is.
+      - name: Adopt the version this run just verified
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet versions.env; then
+            echo "already pinned at $VERSION; nothing to adopt"
+            exit 0
+          fi
+          git commit -qm "pin $VERSION, adopted by the acceptance run that verified it" versions.env
+          # main can move during the run; without the rebase the push races and
+          # the release looks broken for a reason unrelated to the release.
+          git pull --rebase --quiet origin main
+          git push origin HEAD:main
+          echo "adopted $VERSION" >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        run: make down PRODUCT=../contoso-data-product-snowflake-airflow3 SOURCES=../contoso-sources
