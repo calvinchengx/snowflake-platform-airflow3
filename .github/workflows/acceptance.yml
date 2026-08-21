@@ -101,6 +101,19 @@ jobs:
       # and no diagnosis. A settled stack finishes this DAG in seven to fifteen
       # minutes; 1800s is twice the worst of those and still leaves the job time
       # to say why.
+      # THE DAG SHIPS PAUSED, which is G40's fix: a scheduler that starts before
+      # the vendors are ready manufactures a failed run on every `make up`. So
+      # something has to unpause it, and for an unattended run that is here.
+      #
+      # `verify` refuses to unpause on its own, deliberately: it changes the
+      # DAG's schedule and starts a catch-up run alongside, which is a decision
+      # rather than a detail. Doing it here keeps that explicit, in the one
+      # place whose whole job is to assemble this cell.
+      #
+      # Unpausing WITHOUT the adopt change in `verify` would simply move the
+      # refusal one line later, from "is paused" to "already has a run in
+      # flight". Both halves land together. G47.
+      - run: make unpause DAG=contoso_daily PRODUCT=../contoso-data-product-snowflake-airflow3 SOURCES=../contoso-sources
       - run: make verify DAG=contoso_daily VERIFY_TIMEOUT=1800 PRODUCT=../contoso-data-product-snowflake-airflow3 SOURCES=../contoso-sources
       # ADOPT WHAT THIS RUN JUST PROVED, whenever the pin moved -- not only on a
       # dispatch. A scheduled run that verified a newer release end to end has

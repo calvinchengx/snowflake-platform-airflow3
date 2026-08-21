@@ -66,6 +66,27 @@ verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 # was being witnessed -- and "the most recent run" would then be the other one,
 # reporting a verdict for a pipeline this command did not start.
 #
+# IT ADOPTS A RUN ALREADY IN FLIGHT, when there is exactly one. A fresh stack
+# starts a catch-up run of its own the moment the DAG is unpaused and scanned,
+# and with max_active_runs 1 that run owns the only slot. This used to refuse
+# and point at `make kill-runs`, which was honest and made every unattended run
+# fail, because acceptance builds a fresh stack every time. The hatch could not
+# simply be scripted either: the catch-up run only appears after the scan this
+# target waits for, and killing it marks database state without stopping the
+# worker's processes, so the trigger that followed would race a half-finished
+# run for the same tables.
+#
+# Adopting is the STRONGER witness, not the weaker one. It is the same DAG on
+# the same data from the same empty catalog, and the SCHEDULER dispatched it
+# rather than a hand, which is closer to what DoD 3 asks for. The verdict is
+# still for one explicit run-id, found before anything is triggered, so "the
+# most recent run" never decides. Two or more in flight is the one case nobody
+# can adopt, and that still refuses.
+#
+# Ported from fabric-platform-airflow3, where it was measured end to end: the
+# adopted run SUCCEEDED in 13 minutes, against 45+ without finishing before the
+# stack was gated. G47.
+#
 # IT DOES NOT UNPAUSE, deliberately. Unpausing changes the DAG's schedule and
 # starts a catch-up run ALONGSIDE this one: two runs writing the same tables,
 # which is how a witness stops being one. Refusing with the command printed is
@@ -103,17 +124,22 @@ verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 	    exit 1; }; \
 	  busy=$$($(COMPOSE) exec -T airflow airflow dags list-runs $(DAG) -o plain 2>/dev/null \
 	    | awk '$$3 == "running" || $$3 == "queued" {print $$2}' | head -3); \
-	  test -z "$$busy" || { \
-	    echo "$(DAG) already has a run in flight, and max_active_runs is 1:"; \
+	  nbusy=$$(echo "$$busy" | grep -c .); \
+	  test "$$nbusy" -le 1 || { \
+	    echo "$(DAG) has $$nbusy runs in flight, and max_active_runs is 1:"; \
 	    for r in $$busy; do echo "  $$r"; done; \
-	    echo "a trigger now would sit QUEUED behind it, and this command would"; \
-	    echo "report 'still unqueued' after $(VERIFY_TIMEOUT)s having named nothing."; \
-	    echo "two runs writing one catalog is also not a witness. wait for it, or:"; \
+	    echo "which of them is the witness is not this command's to guess, and"; \
+	    echo "two runs writing one catalog is not a witness either. wait, or:"; \
 	    echo "  make kill-runs DAG=$(DAG)"; \
 	    exit 1; }; \
-	  run="verify__$$(date -u +%Y%m%dT%H%M%SZ)"; \
-	  echo "platform: $(DAG) -> $$run"; \
-	  $(COMPOSE) exec -T airflow airflow dags trigger $(DAG) --run-id "$$run" >/dev/null; \
+	  if test -n "$$busy"; then \
+	    run="$$busy"; \
+	    echo "platform: $(DAG) -> adopting the run already in flight, $$run"; \
+	  else \
+	    run="verify__$$(date -u +%Y%m%dT%H%M%SZ)"; \
+	    echo "platform: $(DAG) -> $$run"; \
+	    $(COMPOSE) exec -T airflow airflow dags trigger $(DAG) --run-id "$$run" >/dev/null; \
+	  fi; \
 	  waited=0; \
 	  while :; do \
 	    state=$$($(COMPOSE) exec -T airflow airflow dags list-runs $(DAG) -o plain 2>/dev/null \
