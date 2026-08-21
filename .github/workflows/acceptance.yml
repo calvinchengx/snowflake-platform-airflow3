@@ -71,9 +71,8 @@ jobs:
             version="${{ github.event.client_payload.version }}"
             echo "dispatched for $version"
           else
-            version=$(gh release view --repo calvinchengx/snowflake-emulator \
-                        --json tagName -q .tagName | sed 's/^v//')
-            echo "newest release is $version"
+            version=$(grep -oE '^SNOWFLAKE_EMULATOR_VERSION=.*' versions.env | cut -d= -f2)
+            echo "verifying the pinned release, $version"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       # `make up` already runs doctor, sources, pin and manifest -- the pin
@@ -81,7 +80,22 @@ jobs:
       # IMAGE and the product pins the client WHEEL, in two repositories, and
       # a run against a mismatched pair would verify a combination no
       # consumer will ever have.
-      - name: Point at that version
+      # ONLY ON DISPATCH, and this workflow's first run is why. It moved the pin
+      # to the newest release on the SCHEDULE too, copied from
+      # fabric-platform-airflow3 -- but that cell has no client wheel. This one
+      # does: versions.env pins the emulator IMAGE and the product pins the
+      # snowflake-target WHEEL, in two repositories, and `make up` refuses when
+      # they disagree:
+      #
+      #   THE CLIENT AND THE IMAGE DISAGREE.
+      #   ...pyproject.toml names a release other than the pinned v0.3.2
+      #
+      # A scheduled run cannot bump the leaf, so resolving the newest release
+      # here guaranteed a red every night. `snowflake-platform-tasks` had
+      # already settled this: move the pin only when a release dispatch says
+      # to, and let the schedule verify the pin the cell actually claims.
+      - if: github.event_name == 'repository_dispatch'
+        name: Point at that version
         run: |
           python3 scripts/set_release.py "${{ steps.target.outputs.version }}"
           git --no-pager diff --stat versions.env
@@ -111,7 +125,8 @@ jobs:
       # No `if: always()`. A step with no condition runs only when every step
       # before it passed, which is the gate wanted: a red run leaves the pin
       # where it is.
-      - name: Adopt the version this run just verified
+      - if: github.event_name == 'repository_dispatch'
+        name: Adopt the version this run just verified
         env:
           VERSION: ${{ steps.target.outputs.version }}
         run: |
