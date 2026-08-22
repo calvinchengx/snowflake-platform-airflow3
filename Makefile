@@ -24,6 +24,13 @@ help: ## This list
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/' | expand -t20
 
 up: doctor sources pin manifest ## Build the worker from the product's pyproject.toml and start the stack
+# EVERY WRITABLE BIND MOUNT, DERIVED FROM COMPOSE. Four failures in one
+# evening were one shape: a container running as a non-root uid, and a host
+# directory it mounts that nobody had created for it. Listing the paths here
+# would mean this platform asserting knowledge of a product's layout, which is
+# the coupling these repositories exist to avoid -- so the list comes from the
+# compose config, which the platform already owns.
+	@$(COMPOSE) config --format json | python3 scripts/writable_mounts.py
 	@echo "platform: product = $(PRODUCT_ABS)"
 	@echo "platform: sources = $(SOURCES_ABS)"
 	$(COMPOSE) up --build -d
