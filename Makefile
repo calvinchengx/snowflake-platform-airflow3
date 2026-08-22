@@ -53,6 +53,10 @@ VERIFY_POLL ?= 15
 # processor's first scan takes tens of seconds; asking sooner is asking early,
 # not asking about a missing DAG.
 VERIFY_PARSE_WAIT ?= 300
+# How long to wait, after unpausing, for the scheduler to create its catch-up
+# run before concluding there is none to adopt. Bounded: a DAG whose interval
+# has already run produces nothing here, and that is a legitimate outcome.
+VERIFY_SETTLE ?= 60
 
 verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 # WHAT `trigger` ONLY LOOKED LIKE IT DID. Its help said "and wait" and it
@@ -65,6 +69,30 @@ verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 # DAG can be in flight at the same moment -- that happened while this platform
 # was being witnessed -- and "the most recent run" would then be the other one,
 # reporting a verdict for a pipeline this command did not start.
+#
+# IT CAN UNPAUSE, BUT ONLY WHEN ASKED, AND ONLY HERE. The DAG ships paused
+# (G40: a scheduler that starts before the vendors are ready manufactures a
+# failed run on every `make up`), so an unattended run needs something to
+# unpause it -- and the only correct moment is INSIDE this target, after the
+# scan wait above.
+#
+# THE SCAN IS THE ORDERING CONSTRAINT. `make up` recreates the metadata
+# database, so for the first tens of seconds afterwards every DAG is ABSENT.
+# A step sequenced before `verify` therefore unpauses nothing: the acceptance
+# workflow did exactly that and logged `No paused DAGs were found`, then this
+# target found the DAG and found it paused. Same reason `kill-runs` cannot be
+# scripted ahead of `verify`. G47.
+#
+# VERIFY_UNPAUSE is opt-in because unpausing changes the DAG's schedule, which
+# is a decision rather than a detail; the acceptance workflow passes it, a
+# person gets told about it in the refusal.
+#
+# THE SETTLE LOOP IS NOT POLITENESS. Unpausing does not create the catch-up run
+# synchronously: read `busy` immediately and it is empty, so this command
+# triggers a run of its own, and the scheduler's catch-up arrives a second
+# later. Two runs writing one catalog, which is the exact thing the in-flight
+# check exists to prevent. So it waits, bounded, for a run to appear before
+# deciding whether to adopt or trigger.
 #
 # IT ADOPTS A RUN ALREADY IN FLIGHT, when there is exactly one. A fresh stack
 # starts a catch-up run of its own the moment the DAG is unpaused and scanned,
@@ -117,10 +145,23 @@ verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 	    test $$waited -gt 0 || echo "platform: waiting for $(DAG) to be scanned"; \
 	    sleep $(VERIFY_POLL); waited=$$((waited + $(VERIFY_POLL))); \
 	  done; \
+	  if test "$$paused" = "True" && test -n "$(VERIFY_UNPAUSE)"; then \
+	    echo "platform: unpausing $(DAG); it starts a catch-up run, which this"; \
+	    echo "platform: command then adopts rather than competing with"; \
+	    $(COMPOSE) exec -T airflow airflow dags unpause $(DAG) >/dev/null; \
+	    settle=0; \
+	    while test $$settle -lt $(VERIFY_SETTLE); do \
+	      test -n "$$($(COMPOSE) exec -T airflow airflow dags list-runs $(DAG) -o plain 2>/dev/null \
+	        | awk '$$3 == "running" || $$3 == "queued" {print $$2}')" && break; \
+	      sleep $(VERIFY_POLL); settle=$$((settle + $(VERIFY_POLL))); \
+	    done; \
+	    paused=False; \
+	  fi; \
 	  test "$$paused" = "False" || { \
 	    echo "$(DAG) is paused, so a triggered run would sit queued forever."; \
 	    echo "unpause it deliberately -- it starts a catch-up run as well:"; \
 	    echo "  make unpause DAG=$(DAG)"; \
+	    echo "or let this command do it:  make verify DAG=$(DAG) VERIFY_UNPAUSE=1"; \
 	    exit 1; }; \
 	  busy=$$($(COMPOSE) exec -T airflow airflow dags list-runs $(DAG) -o plain 2>/dev/null \
 	    | awk '$$3 == "running" || $$3 == "queued" {print $$2}' | head -3); \
