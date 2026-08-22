@@ -57,10 +57,37 @@ VERIFY_PARSE_WAIT ?= 300
 # run before concluding there is none to adopt. Bounded: a DAG whose interval
 # has already run produces nothing here, and that is a legitimate outcome.
 VERIFY_SETTLE ?= 60
+# Lines of the failed task's own log to print. Bounded: a chatty task should
+# not bury the traceback under its own progress output.
+VERIFY_LOG_TAIL ?= 60
 
 verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 # WHAT `trigger` ONLY LOOKED LIKE IT DID. Its help said "and wait" and it
 # returned the moment the run was queued, so NOTHING IN THIS REPOSITORY EVER
+# IT PRINTS WHAT THE FAILED TASK SAID, not only its name. Naming the task and
+# stopping is the same defect G48 had one level down: `make up` reported
+# `dependency failed to start` and CI could not say why, which cost three runs
+# and a release before anyone printed a container log. The task's log lives in
+# Airflow's log directory rather than on stdout, so nothing in CI output
+# carries it and `make down` in the cleanup step takes the container with it.
+#
+# BY MTIME, NOT BY PATH TEMPLATE. Airflow 3 has no `tasks logs` command, and
+# the on-disk layout (`dag_id=.../run_id=.../task_id=.../attempt=N.log`) encodes
+# a run_id containing `:` and `+`, which is exactly the kind of thing that gets
+# escaped differently between versions. Finding by dag and task and taking the
+# newest file sidesteps the template and picks the latest ATTEMPT, which is the
+# one that failed.
+#
+# `ls -t` RATHER THAN `find -printf`, because -printf is GNU-only. The first
+# version used it and passed a local test for the wrong reason: an interactive
+# shell had GNU find ahead of BSD find on PATH, while the recipe runs under
+# `sh`, where the same line is `find: -printf: unknown primary or operator` and
+# the guard silently reports "no log" for every task. Validated under `sh`, in
+# both directions -- a task with a log and a task without one.
+#
+# `set --` rather than a bare `ls -t $files`: with no matches, `ls -t` lists the
+# CURRENT DIRECTORY and the check reports a directory as the log file.
+#
 # EXITED NON-ZERO BECAUSE A PIPELINE FAILED. Every green this platform reported
 # rested on a person reading run state by hand afterwards. DoD 3 asks for green
 # THROUGH the orchestrator; a command that cannot go red does not establish it.
@@ -202,7 +229,21 @@ verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 	            || task_id from task_instance \
 	     where dag_id='$(DAG)' and run_id='$$run' and coalesce(state,'x') <> 'success' \
 	     order by (state = 'failed') desc, task_id;" 2>/dev/null || true; \
-	  echo "logs:  make logs"; \
+	  echo ""; \
+	  echo "and this is what they said:"; \
+	  for t in $$($(COMPOSE) exec -T postgres psql -U airflow -d airflow -t -A -c \
+	      "select task_id from task_instance \
+	       where dag_id='$(DAG)' and run_id='$$run' and state='failed' \
+	       order by task_id;" 2>/dev/null); do \
+	    echo ""; echo "--- $$t ---"; \
+	    $(COMPOSE) exec -T airflow sh -c \
+	      'set -- $$(find "$$AIRFLOW_HOME/logs" -path "*$(DAG)*" -path "*'"$$t"'*" \
+	         -name "*.log" 2>/dev/null); \
+	       if [ $$# -gt 0 ]; then tail -n $(VERIFY_LOG_TAIL) "$$(ls -t "$$@" | head -1)"; \
+	       else echo "(no log file for this task)"; fi' 2>/dev/null || true; \
+	  done; \
+	  echo ""; \
+	  echo "full logs:  make logs"; \
 	  exit 1
 
 kill-runs: ## Mark every in-flight run of a DAG failed:  make kill-runs DAG=contoso_daily
