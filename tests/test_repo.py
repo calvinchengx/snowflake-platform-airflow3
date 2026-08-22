@@ -165,3 +165,46 @@ def test_the_credential_is_waited_for_rather_than_assumed():
     assert re.search(r"for _ in \$\(seq 1 \d+\); do\n\s+if \[ -s /emu-data/admin.pat", start), (
         "the PAT must be waited for, not read once"
     )
+
+
+def test_the_acceptance_run_asserts_the_numbers_and_not_only_the_run():
+    """A nightly that proves the DAG RAN proves nothing about the answer.
+
+    G50: across all seven platforms with an acceptance workflow, none compared a
+    snapshot against an expected value. The `publish` task writes
+    product_snapshot.json and nothing read it back, so gold could have returned
+    different money indefinitely behind a green tick.
+
+    THE PATH IS THE PART THAT CAN ROT. The snapshot is written inside the worker
+    at PRODUCT_SNAPSHOT and reaches the runner only through the bind mount
+    beneath it, so the two are asserted together: change the mount without the
+    workflow and this run would check a file that is never written -- which the
+    script reports as a failure, but a day later than this does.
+    """
+    raw = (ROOT / ".github" / "workflows" / "acceptance.yml").read_text(encoding="utf-8")
+    wf = "\n".join(ln for ln in raw.splitlines() if not ln.lstrip().startswith("#"))
+    assert "scripts/assert_snapshot.py" in wf, (
+        "the acceptance run never asserts the figures core publishes"
+    )
+    core = wf[wf.index("repository: calvinchengx/contoso-data-product\n") :]
+    assert re.search(r"ref: [0-9a-f]{40}", core[: core.index("path:")]), (
+        "the contoso-data-product checkout is not pinned to a commit"
+    )
+    assert wf.index("make verify") < wf.index("scripts/assert_snapshot.py"), (
+        "the numbers are asserted before the run that produces them"
+    )
+
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    inside = re.search(r"PRODUCT_SNAPSHOT:\s*(\S+)", compose)
+    assert inside, "docker-compose.yml no longer says where the snapshot is written"
+    container_dir, name = inside.group(1).rsplit("/", 1)
+    mount = re.search(rf"\$\{{PRODUCT\}}/(\S+):{re.escape(container_dir)}\b", compose)
+    assert mount, (
+        f"nothing mounts {container_dir} from the product, so the snapshot the "
+        f"worker writes never reaches the runner"
+    )
+    expected = f"../contoso-data-product-snowflake-airflow3/{mount.group(1)}/{name}"
+    assert expected in wf, (
+        f"the acceptance run reads a different path than the compose mount "
+        f"implies; expected {expected}"
+    )

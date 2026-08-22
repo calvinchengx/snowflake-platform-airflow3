@@ -53,6 +53,22 @@ jobs:
         with:
           repository: calvinchengx/contoso-data-product-snowflake-airflow3
           path: contoso-data-product-snowflake-airflow3
+      # THE FAMILY'S FIGURES, from the repository that owns them. Not the
+      # product and not a dependency of this platform: the last step of this
+      # job runs one script out of this checkout to hold the run's snapshot to
+      # the numbers every cell must produce.
+      #
+      # PINNED BY SHA, not tracking main. Core's own rules say a release is the
+      # unit of change and nothing tracks main, and a nightly whose expectations
+      # can move without a reviewed commit here is a nightly that can be turned
+      # green by editing another repository. A SHA is also what this workflow
+      # already does for every third-party action. Move it deliberately, and
+      # only when the family's numbers move.
+      - uses: actions/checkout@v7
+        with:
+          repository: calvinchengx/contoso-data-product
+          ref: 2cf7bae8a1e1f4a8cddd2cd5510d435e16febb3b
+          path: contoso-data-product
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.32"
@@ -123,6 +139,20 @@ jobs:
       # found`, immediately followed by verify finding the DAG and finding it
       # paused. G47.
       - run: make verify DAG=contoso_daily VERIFY_TIMEOUT=1800 VERIFY_UNPAUSE=1 PRODUCT=../contoso-data-product-snowflake-airflow3 SOURCES=../contoso-sources
+      # THE NUMBERS, not merely the run (G50). Everything above proves the DAG
+      # ran green; this is the only step that can fail because gold returned
+      # different money. The `publish` task writes the snapshot to
+      # /opt/product-out, which is ${PRODUCT}/out on the runner, and until now
+      # nothing read it back.
+      #
+      # No `if: always()`. A failed DAG has no numbers worth checking, and a
+      # missing snapshot after a SUCCESSFUL run is a finding the script reports
+      # as one rather than skipping.
+      - name: Assert the figures core publishes
+        run: |
+          python3 ../contoso-data-product/scripts/assert_snapshot.py \
+            --label snowflake-platform-airflow3 \
+            ../contoso-data-product-snowflake-airflow3/out/product_snapshot.json
       # ADOPT WHAT THIS RUN JUST PROVED, whenever the pin moved -- not only on a
       # dispatch. A scheduled run that verified a newer release end to end has
       # proved exactly what a dispatched one proves, and discarding that would
