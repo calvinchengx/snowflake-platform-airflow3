@@ -19,7 +19,7 @@ PASSWORD_FILE := /opt/airflow/simple_auth_manager_passwords.json.generated
 COMPOSE := PRODUCT=$(PRODUCT_ABS) PRODUCT_NAME=$(PRODUCT_NAME) SOURCES=$(SOURCES_ABS) PWD=$(CURDIR) \
            docker compose -p $(PROJECT) -f docker-compose.yml -f $(FRAGMENT)
 
-.PHONY: help up down logs connections creds doctor sources trigger unpause verify pin manifest test lint
+.PHONY: help up down logs connections creds doctor sources trigger unpause verify pin manifest test lint witness
 help: ## This list
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/' | expand -t20
 
@@ -252,6 +252,18 @@ verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 	  echo ""; \
 	  echo "full logs:  make logs"; \
 	  exit 1
+
+# THE PRODUCT NAMES ITS DAG; THE PLATFORM MUST NOT. `verify` insists on DAG=
+# so a typo cannot run the wrong graph, and a test here refuses any product
+# identifier in this repository, so the argument-free `witness` DERIVES the
+# id from the product it was pointed at: the one file under its dags/. Two
+# files is an ambiguity and it says so rather than guessing. The id is the
+# file's stem by the leaves' own convention; a product that breaks it gets
+# `verify`'s "no such DAG" rather than a silent wrong run.
+witness: ## The family's one word for `verify`, needing no arguments
+	@n=$$(ls $(PRODUCT_ABS)/dags/*.py 2>/dev/null | wc -l | tr -d ' '); \
+	test "$$n" -eq 1 || { echo "witness: $(PRODUCT_ABS)/dags holds $$n DAG files, so say which: make verify DAG=<dag_id>"; exit 2; }
+	$(MAKE) verify DAG=$(basename $(notdir $(wildcard $(PRODUCT_ABS)/dags/*.py)))
 
 kill-runs: ## Mark every in-flight run of a DAG failed:  make kill-runs DAG=contoso_daily
 # THE ESCAPE HATCH `verify` POINTS AT. A fresh stack starts a CATCH-UP run of
