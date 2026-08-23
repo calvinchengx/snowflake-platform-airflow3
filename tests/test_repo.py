@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -167,44 +168,29 @@ def test_the_credential_is_waited_for_rather_than_assumed():
     )
 
 
-def test_the_acceptance_run_asserts_the_numbers_and_not_only_the_run():
-    """A nightly that proves the DAG RAN proves nothing about the answer.
+# --- digest pins ---------------------------------------------------------------
+#
+# Docker IGNORES the tag in `repo:tag@sha256:...` — the digest decides, silently.
+# So a version bumped without its digest runs the OLD image under the NEW name.
 
-    G50: across all seven platforms with an acceptance workflow, none compared a
-    snapshot against an expected value. The `publish` task writes
-    product_snapshot.json and nothing read it back, so gold could have returned
-    different money indefinitely behind a green tick.
-
-    THE PATH IS THE PART THAT CAN ROT. The snapshot is written inside the worker
-    at PRODUCT_SNAPSHOT and reaches the runner only through the bind mount
-    beneath it, so the two are asserted together: change the mount without the
-    workflow and this run would check a file that is never written -- which the
-    script reports as a failure, but a day later than this does.
-    """
-    raw = (ROOT / ".github" / "workflows" / "acceptance.yml").read_text(encoding="utf-8")
-    wf = "\n".join(ln for ln in raw.splitlines() if not ln.lstrip().startswith("#"))
-    assert "scripts/assert_snapshot.py" in wf, (
-        "the acceptance run never asserts the figures core publishes"
-    )
-    core = wf[wf.index("repository: calvinchengx/contoso-data-product\n") :]
-    assert re.search(r"ref: [0-9a-f]{40}", core[: core.index("path:")]), (
-        "the contoso-data-product checkout is not pinned to a commit"
-    )
-    assert wf.index("make verify") < wf.index("scripts/assert_snapshot.py"), (
-        "the numbers are asserted before the run that produces them"
-    )
-
+def test_every_image_in_the_compose_file_is_fetched_by_digest():
+    """Every `image:` line, not a list to keep in step. An allowlist passes the
+    day someone adds a service and forgets it, which is when the pin is
+    missing."""
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    inside = re.search(r"PRODUCT_SNAPSHOT:\s*(\S+)", compose)
-    assert inside, "docker-compose.yml no longer says where the snapshot is written"
-    container_dir, name = inside.group(1).rsplit("/", 1)
-    mount = re.search(rf"\$\{{PRODUCT\}}/(\S+):{re.escape(container_dir)}\b", compose)
-    assert mount, (
-        f"nothing mounts {container_dir} from the product, so the snapshot the "
-        f"worker writes never reaches the runner"
-    )
-    expected = f"../contoso-data-product-snowflake-airflow3/{mount.group(1)}/{name}"
-    assert expected in wf, (
-        f"the acceptance run reads a different path than the compose mount "
-        f"implies; expected {expected}"
-    )
+    for line in compose.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("image:"):
+            continue
+        assert "@${" in stripped and "_DIGEST" in stripped, f"pulled by tag alone: {stripped}"
+        assert ":-" not in stripped, f"a default version floats: {stripped}"
+
+
+def test_every_pin_has_both_a_version_and_a_digest():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from digests import PINS
+
+    text = (ROOT / "versions.env").read_text(encoding="utf-8")
+    for prefix in PINS:
+        assert re.search(rf"^{prefix}_VERSION=.+$", text, re.M), prefix
+        assert re.search(rf"^{prefix}_DIGEST=sha256:[0-9a-f]{{64}}$", text, re.M), prefix

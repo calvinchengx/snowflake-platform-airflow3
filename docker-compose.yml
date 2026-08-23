@@ -29,7 +29,7 @@
 services:
   postgres:
     mem_limit: 512m
-    image: postgres:${POSTGRES_VERSION:-16}
+    image: postgres:${POSTGRES_VERSION:?see versions.env}@${POSTGRES_DIGEST:?see versions.env}
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -42,7 +42,7 @@ services:
 
   snowflake:
     mem_limit: 4g
-    image: ghcr.io/calvinchengx/snowflake-emulator:${SNOWFLAKE_EMULATOR_VERSION:?see versions.env}
+    image: ghcr.io/calvinchengx/snowflake-emulator:${SNOWFLAKE_EMULATOR_VERSION:?see versions.env}@${SNOWFLAKE_EMULATOR_DIGEST:?see versions.env}
     ports:
       # Published for a human with a SQL client, not for the pipeline -- the
       # worker reaches this by service name. 18449 rather than the Tasks
@@ -82,7 +82,7 @@ services:
   # common gid, and inventing one would be a change to the emulator's contract
   # made from the outside.
   stage-init:
-    image: busybox:${BUSYBOX_VERSION:?see versions.env}
+    image: busybox:${BUSYBOX_VERSION:?see versions.env}@${BUSYBOX_DIGEST:?see versions.env}
     user: root
     command: ["sh", "-c", "mkdir -p /stages && chmod 0777 /stages && echo 'platform: stage is writable by the worker and the warehouse'"]
     volumes:
@@ -135,6 +135,12 @@ services:
       # THE STAGE, by the name the product reads. Same volume as the warehouse
       # mounts, so a file ingest writes is a file COPY INTO can see.
       PRODUCT_STAGE: /stages
+      # WHERE INGEST WRITES BEFORE UPLOADING. The product is mounted READ-ONLY
+      # -- deliberately, so a run cannot edit the code it is running -- and
+      # since G46 ingest writes each part to its own scratch space and then
+      # `PUT`s it. That scratch space has to be somewhere writable, so it goes
+      # under the product's `out/` mount rather than beside its source.
+      PRODUCT_WORK: /opt/product-out/work
       # Where the product writes what it built, so a witness can read it from
       # the host without entering the container. PRODUCT_* rather than
       # CONTOSO_* -- the two Databricks platforms spell these with the product's
