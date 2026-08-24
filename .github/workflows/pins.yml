@@ -1,0 +1,73 @@
+# The cells in this engine group must run the SAME the Snowflake emulator, or a difference in
+# their gold numbers is unattributable -- it could be the orchestrator or it
+# could be the engine, and nobody could say which.
+#
+# THIS RUNS ON A SCHEDULE BECAUSE THE DRIFT ARRIVES FROM ANOTHER REPOSITORY.
+# A check that fires only on push and pull_request needs a commit HERE, and a
+# sibling moving its pin is not that. The Databricks pair learned this the
+# expensive way: its check was correct for weeks while nothing asked it. See
+# G53 in contoso-data-product/docs/01-plan.md.
+#
+# EXPECT THIS RED WHEN IT LANDS. These pins have already drifted; the check is
+# reporting a real difference, not a broken workflow. Closing it is a decision
+# about which version this group should run, and the fix is to move the pins
+# with scripts/refresh_digests.py -- both halves together, because docker
+# ignores the tag in `repo:tag@sha256:...` and the digest silently wins.
+#
+# NOT COMPARED, deliberately: AIRFLOW_VERSION, POSTGRES and BUSYBOX belong to
+# the airflow3 cell alone, and OPENMETADATA/OPENSEARCH to the tasks cell
+# alone. Neither set is shared, so neither is drift.
+#
+# GitHub disables schedules in a repository with 60 days of no activity, and
+# says so by email. If this stops reporting, that is the first thing to check.
+name: Pins
+
+on:
+  schedule:
+    - cron: '29 6 * * *' # daily -- a sibling can move on any day
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: # so a suspected drift can be confirmed without waiting
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pins-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pins:
+    name: pins match the rest of the snowflake group
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: compare against every sibling cell
+        run: |
+          set -a; . ./versions.env; set +a
+          fail=0
+          for sib in snowflake-platform-tasks; do
+            curl -fsSL "https://raw.githubusercontent.com/calvinchengx/$sib/main/versions.env" -o /tmp/$sib.env
+            echo "--- $sib ---"
+            for name in SNOWFLAKE_EMULATOR; do
+              # BOTH halves. A version that agrees while the digest does not is
+              # two cells pulling different bytes under the same label.
+              for half in VERSION DIGEST; do
+                var="${name}_${half}"
+                mine=$(eval echo \$$var)
+                theirs=$(grep -E "^$var=" /tmp/$sib.env | cut -d= -f2- || true)
+                if [ -z "$theirs" ]; then
+                  echo "::warning::$var is not pinned by $sib"
+                elif [ "$mine" != "$theirs" ]; then
+                  echo "::error::$var is $mine here and $theirs in $sib"
+                  fail=1
+                else
+                  echo "ok $var=$mine"
+                fi
+              done
+            done
+          done
+          exit $fail
