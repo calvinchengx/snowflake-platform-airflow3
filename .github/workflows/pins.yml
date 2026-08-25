@@ -1,4 +1,4 @@
-# The cells in this engine group must run the SAME the Snowflake emulator, or a difference in
+# The cells in this engine group must run the SAME Snowflake emulator, or a difference in
 # their gold numbers is unattributable -- it could be the orchestrator or it
 # could be the engine, and nobody could say which.
 #
