@@ -60,7 +60,7 @@ def fragment(decl: dict, sources_dir: str, pins: dict) -> dict:
         kind = v.get("kind")
         if kind == "openapi":
             services[name] = {
-                "image": f"mokapi/mokapi:{pins['MOKAPI_VERSION']}",
+                "image": f"mirror.gcr.io/mokapi/mokapi:{pins['MOKAPI_VERSION']}",
                 # The dashboard retains every request AND its response body. For
                 # a large export that is a multi-hundred-MB copy per call, so the
                 # history is capped at one entry per API -- the reason this flag
@@ -100,7 +100,7 @@ def fragment(decl: dict, sources_dir: str, pins: dict) -> dict:
             # something else entirely.
             db, broker, connect = f"{name}-db", f"{name}-broker", f"{name}-connect"
             services[db] = {
-                "image": f"postgres:{pins['POSTGRES_VERSION']}",
+                "image": f"mirror.gcr.io/library/postgres:{pins['POSTGRES_VERSION']}",
                 "mem_limit": "512m",
                 # LOGICAL replication, and the slots to hold it. Debezium reads
                 # the WAL; at the default `replica` level there is nothing in it
@@ -132,7 +132,7 @@ def fragment(decl: dict, sources_dir: str, pins: dict) -> dict:
             }
             if v.get("seed"):
                 services[f"{name}-seed"] = {
-                    "image": f"python:{pins.get('PYTHON_VERSION', '3.12')}-slim",
+                    "image": f"mirror.gcr.io/library/python:{pins.get('PYTHON_VERSION', '3.12')}-slim",
                     "depends_on": {db: {"condition": "service_healthy"},
                                    connect: {"condition": "service_healthy"}},
                     "environment": {
@@ -182,7 +182,7 @@ def fragment(decl: dict, sources_dir: str, pins: dict) -> dict:
                     "restart": "no",
                 }
             services[connect] = {
-                "image": f"debezium/connect:{pins['DEBEZIUM_VERSION']}",
+                "image": f"mirror.gcr.io/debezium/connect:{pins['DEBEZIUM_VERSION']}",
                 "depends_on": {db: {"condition": "service_healthy"},
                                broker: {"condition": "service_healthy"}},
                 # A JVM: the cgroup cap alone is what G31 proved insufficient,

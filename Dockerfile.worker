@@ -21,7 +21,7 @@
 # platform learns nothing about what is in it, exactly as it learns nothing
 # about what is in pyproject.toml.
 ARG AIRFLOW_VERSION=3.3.1
-FROM apache/airflow:${AIRFLOW_VERSION}
+FROM mirror.gcr.io/apache/airflow:${AIRFLOW_VERSION}
 ARG PRODUCT_DIR=product
 COPY --chown=airflow ${PRODUCT_DIR}/ /opt/build/
 RUN if [ -f /opt/build/uv-overrides.txt ]; then \
