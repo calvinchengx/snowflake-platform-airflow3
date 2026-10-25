@@ -16,7 +16,7 @@ authors = [{name = "Calvin Cheng", email = "calvin@calvinx.com"}]
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest>=9.0.3,<10", "ruff>=0.15,<0.16"]
+dev = ["pytest>=9.0.3,<10", "ruff>=0.15,<0.18"]
 
 [tool.uv]
 package = false
