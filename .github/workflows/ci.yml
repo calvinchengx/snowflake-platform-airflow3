@@ -30,7 +30,7 @@ jobs:
       # rejects was decided by ruff's release calendar rather than by anything
       # in this repository -- 0.16 promoted ISC and FURB into the default rule
       # set and the job went red on a branch nobody had touched.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.12.3"
       # The Windows runner ships no make, and `make test`/`make lint` are how
