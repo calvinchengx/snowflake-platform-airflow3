@@ -1,25 +1,29 @@
 version: 2
 
-# Weekly, grouped, and held for a week after release so a compromised or
-# yanked version has time to be caught before it is proposed here.
+# The ecosystems this repository actually has, declared so updates arrive
+# grouped and weekly rather than one pull request per transitive package.
 updates:
   - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
-    cooldown:
-      default-days: 7
     open-pull-requests-limit: 5
     groups:
       python:
         patterns: ['*']
+    ignore:
+      # RUFF IS BOUNDED IN pyproject.toml (`<0.16`), deliberately, and this
+      # keeps Dependabot from proposing the bound itself every week. 0.16 and
+      # 0.17 enable rule sets that flag roughly thirty existing sites in
+      # scripts/; taking the linter first would land a red build and hide the
+      # dependency bumps behind it. The migration is its own change.
+      - dependency-name: ruff
+        versions: ['>=0.16']
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    cooldown:
-      default-days: 7
     open-pull-requests-limit: 5
     groups:
       actions:
